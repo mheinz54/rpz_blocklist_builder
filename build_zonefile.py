@@ -9,6 +9,7 @@ stevenblack_hostfile_url = 'https://raw.githubusercontent.com/StevenBlack/hosts/
 badsites_topmil_url = 'https://raw.githubusercontent.com/chadmayfield/pihole-blocklists/master/lists/pi_blocklist_porn_top1m.list'
 whitelist_remote_url = 'https://raw.githubusercontent.com/anudeepND/whitelist/master/domains/whitelist.txt'
 whitelist_file = "whitelist.txt"
+blacklist_file = "blacklist.txt"
 
 def check_url(the_url):
     try:
@@ -20,12 +21,25 @@ def check_url(the_url):
 def clean_url(the_url):
     if len(the_url) < 1 or the_url[0] == '#':
         return None
-    delim = '\t', ' ', '\r', '\n'
+
+    dont_add = ['0.0.0.0', '127.0.0.1', '::1', 'localhost']
+    delim = '\t', ' ', '\r', '\n', ':'
     regexPattern = '|'.join(map(re.escape, delim))
-    parts = re.split(regexPattern, str(the_url))
+    parts = re.split(regexPattern, str(the_url).lower())
+
     for part in parts:
-        if part != '0.0.0.0' and part != '127.0.0.1' and part != '::1' and part != 'localhost': 
-            return part.lstrip('www.').lower()
+        if part not in dont_add and len(part) > 3: 
+            b_part = part
+            if part[-1] == '*': # temp fix: if it ends in a wildcard, change it to .com
+                part = part[0:-2] + ".com"
+            while len(part) >= 96:
+                part = '.'.join(part.split('.')[1:])
+            part = part.lstrip('www.')
+            #if len(part) > 4:
+            if len(part) < 4 or not '.' in part:
+                print(b_part + ":::" + part)
+            else:
+                return part
     return None
 
 blocklist_urls = [x for x in requests.get(list_of_blocklists_url).text.split('\n') if check_url(x)]
@@ -47,17 +61,25 @@ for zone in zones_lists:
     else:
         zone_set.add(clean_url(zone))
 
+with open(blacklist_file, 'r') as f:
+    for line in f:
+        zone_set.add(clean_url(line))
+
 # check through whitelist to remove from black
 zones_lists = requests.get(whitelist_remote_url).text.split('\n')
 white_set = set()
-for zone in zones_lists:
-    white_set.add(clean_url(zone))
+with open('remote_whitelist.txt', 'w') as f:
+    for zone in zones_lists:
+        u = clean_url(zone)
+        white_set.add(u)
+        f.write(str(u) + '\n')
 
 with open(whitelist_file, 'r') as f:
     for line in f:
         white_set.add(clean_url(line))
     
 print(len(zone_set))
+#zone_set = sorted(zone_set - white_set)
 zone_set = zone_set - white_set
 print(len(zone_set))
 
@@ -76,4 +98,4 @@ with open('rpzzones.db', 'w') as f:
     for zone in zone_set:
         if len(zone) > 1:
             f.write('%s CNAME .\n' % zone)
-            #f.write('*.%s CNAME .\n' % zone)
+            #f.write('*.%s CNAME .\n' % zone) # too aggressive 
